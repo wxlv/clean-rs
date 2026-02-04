@@ -286,8 +286,10 @@ impl CleanupItem {
 pub fn get_all_cleanup_items() -> Vec<CleanupItem> {
     let mut items = Vec::new();
 
-    let _home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+    let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
     let temp_dir = std::env::temp_dir();
+    let appdata_local = dirs::data_local_dir();
+    let appdata_roaming = dirs::config_dir();
 
     // 1. Temporary files directory
     items.push(CleanupItem {
@@ -392,6 +394,109 @@ pub fn get_all_cleanup_items() -> Vec<CleanupItem> {
             name: "最近文档".to_string(),
             description: "Windows 最近访问的文档列表".to_string(),
             cleanup_type: CleanupType::Directory(recent_docs),
+            enabled: false,
+        });
+    }
+
+    // 9. Windows Update Cache (Windows)
+    #[cfg(windows)]
+    {
+        let windows_update_cache = PathBuf::from("C:\\Windows\\SoftwareDistribution\\Download");
+        items.push(CleanupItem {
+            id: "windows_update_cache".to_string(),
+            name: "Windows 更新缓存".to_string(),
+            description: "Windows 更新下载的临时文件".to_string(),
+            cleanup_type: CleanupType::Directory(windows_update_cache),
+            enabled: false,
+        });
+    }
+
+    // 10. Windows Error Reporting (Windows)
+    #[cfg(windows)]
+    if let Some(appdata) = dirs::data_local_dir() {
+        let wer_cache = appdata.join("Microsoft\\Windows\\WER");
+        items.push(CleanupItem {
+            id: "windows_error_reporting".to_string(),
+            name: "Windows 错误报告".to_string(),
+            description: "Windows 错误报告和诊断文件".to_string(),
+            cleanup_type: CleanupType::Directory(wer_cache),
+            enabled: false,
+        });
+    }
+
+    // 11. Microsoft Edge Cache (Windows)
+    #[cfg(target_os = "windows")]
+    if let Some(appdata) = dirs::data_local_dir() {
+        let edge_cache = appdata.join("Microsoft\\Edge\\User Data\\Default\\Cache");
+        items.push(CleanupItem {
+            id: "edge_cache".to_string(),
+            name: "Microsoft Edge 缓存".to_string(),
+            description: "Edge 浏览器缓存文件".to_string(),
+            cleanup_type: CleanupType::Directory(edge_cache),
+            enabled: false,
+        });
+    }
+
+    // 12. Windows Search Index (Windows)
+    #[cfg(windows)]
+    {
+        let search_index = PathBuf::from("C:\\ProgramData\\Microsoft\\Windows Search");
+        items.push(CleanupItem {
+            id: "windows_search".to_string(),
+            name: "Windows 搜索索引".to_string(),
+            description: "Windows 搜索索引缓存".to_string(),
+            cleanup_type: CleanupType::Directory(search_index),
+            enabled: false,
+        });
+    }
+
+    // 13. Download Folder (Optional - user must be careful)
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    if let Some(download_dir) = dirs::download_dir() {
+        items.push(CleanupItem {
+            id: "download_folder".to_string(),
+            name: "下载文件夹 (谨慎使用)".to_string(),
+            description: format!("下载文件夹: {}", download_dir.display()),
+            cleanup_type: CleanupType::Directory(download_dir),
+            enabled: false,
+        });
+    }
+
+    // 14. Windows Delivery Optimization (Windows 10/11)
+    #[cfg(windows)]
+    if let Some(appdata) = dirs::data_local_dir() {
+        let delivery_opt = appdata.join("Microsoft\\Windows\\DeliveryOptimization");
+        items.push(CleanupItem {
+            id: "delivery_optimization".to_string(),
+            name: "Windows 传递优化缓存".to_string(),
+            description: "Windows 更新传递优化文件".to_string(),
+            cleanup_type: CleanupType::Directory(delivery_opt),
+            enabled: false,
+        });
+    }
+
+    // 15. Adobe PDF Cache (Common)
+    #[cfg(target_os = "windows")]
+    if let Some(appdata_local_dir) = dirs::data_local_dir() {
+        let adobe_cache = appdata_local_dir.join("Adobe\\Acrobat\\DC");
+        items.push(CleanupItem {
+            id: "adobe_cache".to_string(),
+            name: "Adobe PDF 缓存".to_string(),
+            description: "Adobe Acrobat 临时文件".to_string(),
+            cleanup_type: CleanupType::Directory(adobe_cache),
+            enabled: false,
+        });
+    }
+
+    // 16. Windows Recycle Bin
+    #[cfg(windows)]
+    {
+        // This is a placeholder - actual recycle bin cleaning needs special handling
+        items.push(CleanupItem {
+            id: "recycle_bin".to_string(),
+            name: "回收站".to_string(),
+            description: "Windows 回收站 (需要管理员权限)".to_string(),
+            cleanup_type: CleanupType::Directory(PathBuf::from("C:\\$Recycle.Bin")),
             enabled: false,
         });
     }

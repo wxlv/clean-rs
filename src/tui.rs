@@ -53,7 +53,7 @@ impl App {
             clean_results,
             selected_index: 0,
             state: AppState::Initial,
-            status_message: "按 SPACE 选择/取消选择, ENTER 扫描, C 清理, Q 退出".to_string(),
+            status_message: "SPACE 选择 | A 全选 | D 取消 | I 反选 | ENTER 扫描 | C 清理 | Q 退出".to_string(),
             is_scanning: false,
             is_cleaning: false,
             last_key_event_time: None,
@@ -85,6 +85,27 @@ impl App {
             item.enabled = !item.enabled;
             debug!("Toggled selection for item {}: {}", self.selected_index, item.name);
         }
+    }
+
+    pub fn select_all(&mut self) {
+        for item in &mut self.cleanup_items {
+            item.enabled = true;
+        }
+        info!("Selected all items");
+    }
+
+    pub fn deselect_all(&mut self) {
+        for item in &mut self.cleanup_items {
+            item.enabled = false;
+        }
+        info!("Deselected all items");
+    }
+
+    pub fn invert_selection(&mut self) {
+        for item in &mut self.cleanup_items {
+            item.enabled = !item.enabled;
+        }
+        info!("Inverted selection");
     }
 
     pub fn next(&mut self) {
@@ -179,8 +200,25 @@ pub fn run_tui() -> io::Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    
+    const MIN_WIDTH: u16 = 80;
+    const MIN_HEIGHT: u16 = 24;
+    
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+    
+    // Set terminal size to reasonable minimum if it's too small
+    let size = terminal.size()?;
+    if size.width < MIN_WIDTH || size.height < MIN_HEIGHT {
+        let new_width = size.width.max(MIN_WIDTH);
+        let new_height = size.height.max(MIN_HEIGHT);
+        terminal.resize(Rect {
+            x: 0,
+            y: 0,
+            width: new_width,
+            height: new_height,
+        })?;
+    }
 
     let mut app = App::new();
     let mut list_state = ListState::default();
@@ -258,6 +296,22 @@ fn run_app<B: Backend>(
                         *app = App::new();
                         list_state.select(Some(0));
                     }
+                    // Batch selection shortcuts
+                    KeyCode::Char('a') | KeyCode::Char('A') => {
+                        if !app.is_scanning && !app.is_cleaning {
+                            app.select_all();
+                        }
+                    }
+                    KeyCode::Char('d') | KeyCode::Char('D') => {
+                        if !app.is_scanning && !app.is_cleaning {
+                            app.deselect_all();
+                        }
+                    }
+                    KeyCode::Char('i') | KeyCode::Char('I') => {
+                        if !app.is_scanning && !app.is_cleaning {
+                            app.invert_selection();
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -266,32 +320,49 @@ fn run_app<B: Backend>(
 }
 
 fn ui(f: &mut Frame<'_>, app: &mut App, list_state: &mut ListState) {
+    // Modern color scheme inspired by CCleaner/BleachBit
+    let header_color = Color::Rgb(0, 120, 215);  // Windows blue
+    let success_color = Color::Rgb(16, 185, 129); // Green
+    let warning_color = Color::Rgb(245, 158, 11); // Amber/Yellow
+    let accent_color = Color::Rgb(99, 102, 241);  // Indigo
+    let bg_color = Color::Rgb(30, 41, 59);        // Dark slate
+    
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(5),  // Header
-            Constraint::Min(10),    // Main content
-            Constraint::Length(3),  // Status bar
+            Constraint::Length(6),  // Header (increased)
+            Constraint::Min(12),    // Main content
+            Constraint::Length(4),  // Status bar (increased)
         ])
         .split(f.size());
 
-    // Header
+    // Clear background with modern dark theme
+    let bg_block = Block::default()
+        .style(Style::default().bg(bg_color));
+    f.render_widget(bg_block, f.size());
+
+    // Header with modern styling
     let header = Block::default()
         .borders(Borders::ALL)
-        .title(" Clean-RS 系统清理工具 ")
-        .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+        .border_style(Style::default().fg(header_color))
+        .title(" 🧹 Clean-RS 系统清理工具 v0.3 ")
+        .title_style(Style::default().fg(header_color).add_modifier(Modifier::BOLD));
     
     let header_text = if app.state == AppState::CleaningDone {
         let total_size = app.get_total_size(true);
         let total_files = app.get_total_files(true);
         vec![
             Line::from(vec![
-                Span::styled("清理完成! ", Style::default().fg(Color::Green)),
+                Span::styled("✓ 清理完成! ", Style::default().fg(success_color).add_modifier(Modifier::BOLD)),
                 Span::styled(format!("共释放 {:.2} MB ", total_size), 
-                           Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                           Style::default().fg(warning_color).add_modifier(Modifier::BOLD)),
                 Span::styled(format!("({} 个文件)", total_files), 
-                           Style::default().fg(Color::Gray)),
+                           Style::default().fg(Color::Rgb(148, 163, 184))),
+            ]),
+            Line::from(vec![
+                Span::styled("系统已优化，可以选择其他项目继续清理", 
+                           Style::default().fg(Color::Rgb(148, 163, 184))),
             ])
         ]
     } else if app.state == AppState::ScanningDone {
@@ -299,31 +370,40 @@ fn ui(f: &mut Frame<'_>, app: &mut App, list_state: &mut ListState) {
         let total_files = app.get_total_files(false);
         vec![
             Line::from(vec![
-                Span::styled("扫描完成! ", Style::default().fg(Color::Cyan)),
+                Span::styled("✓ 扫描完成! ", Style::default().fg(accent_color).add_modifier(Modifier::BOLD)),
                 Span::styled(format!("可清理 {:.2} MB ", total_size), 
-                           Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                           Style::default().fg(warning_color).add_modifier(Modifier::BOLD)),
                 Span::styled(format!("({} 个文件)", total_files), 
-                           Style::default().fg(Color::Gray)),
+                           Style::default().fg(Color::Rgb(148, 163, 184))),
             ]),
             Line::from(vec![
-                Span::styled("按 [C] 开始清理, [R] 重置", 
-                           Style::default().fg(Color::Yellow)),
+                Span::styled("按 [C] 开始清理, [R] 重置, [Q] 退出", 
+                           Style::default().fg(warning_color)),
             ])
         ]
     } else if app.is_scanning {
         vec![
             Line::from(vec![
-                Span::styled("正在扫描...", Style::default().fg(Color::Yellow)),
+                Span::styled("⏳ 正在扫描系统...", Style::default().fg(warning_color)),
+            ]),
+            Line::from(vec![
+                Span::styled("请稍候...", Style::default().fg(Color::Rgb(148, 163, 184))),
             ])
         ]
     } else if app.is_cleaning {
         vec![
             Line::from(vec![
-                Span::styled("正在清理...", Style::default().fg(Color::Yellow)),
+                Span::styled("🧹 正在清理垃圾文件...", Style::default().fg(warning_color)),
+            ]),
+            Line::from(vec![
+                Span::styled("请稍候...", Style::default().fg(Color::Rgb(148, 163, 184))),
             ])
         ]
     } else {
         vec![
+            Line::from(vec![
+                Span::styled("👋 欢迎使用 Clean-RS!", Style::default().fg(accent_color).add_modifier(Modifier::BOLD)),
+            ]),
             Line::from(vec![
                 Span::styled("选择要清理的项目，然后按 [ENTER] 扫描", 
                            Style::default().fg(Color::White)),
@@ -342,40 +422,46 @@ fn ui(f: &mut Frame<'_>, app: &mut App, list_state: &mut ListState) {
         .iter()
         .enumerate()
         .map(|(i, item)| {
-            let status_icon = if item.enabled { "[✓]" } else { "[ ]" };
+            let status_icon = if item.enabled { "✓" } else { "○" };
             let style = if item.enabled {
-                Style::default().fg(Color::Green)
+                Style::default()
+                    .fg(Color::Rgb(34, 197, 94))
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(Color::Rgb(148, 163, 184))
             };
             
             let result_info = if let (AppState::ScanningDone, Some(true)) = 
                 (&app.state, app.scan_results.get(i).map(|r| r.is_some())) {
                 let result = app.scan_results[i].as_ref().unwrap();
                 if result.has_data {
-                    format!(" - {:.2} MB, {} 文件", result.size_mb(), result.files)
+                    format!(" → {:.2} MB, {} 文件", result.size_mb(), result.files)
                 } else {
-                    " - 无数据".to_string()
+                    " → (无数据)".to_string()
                 }
             } else if let (AppState::CleaningDone, Some(true)) = 
                 (&app.state, app.clean_results.get(i).map(|r| r.is_some())) {
                 let result = app.clean_results[i].as_ref().unwrap();
                 if result.has_data {
-                    format!(" - ✓ 已清理 {:.2} MB", result.size_mb())
+                    format!(" → ✓ 已清理",)
                 } else {
-                    " - 无数据".to_string()
+                    " → (无数据)".to_string()
                 }
             } else {
                 "".to_string()
             };
             
-            let content = format!("{} {}{}{} {}", 
-                status_icon,
-                &item.name,
-                if item.enabled { "" } else { " (禁用)" },
-                result_info,
-                if result_info.is_empty() { &item.description } else { "" }
-            );
+            let icon_style = if item.enabled {
+                Style::default().fg(Color::Rgb(34, 197, 94))
+            } else {
+                Style::default().fg(Color::Rgb(148, 163, 184))
+            };
+            
+            let content = Line::from(vec![
+                Span::styled(format!("[{}] ", status_icon), icon_style),
+                Span::styled(&item.name, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Span::styled(result_info, Style::default().fg(warning_color)),
+            ]);
             
             ListItem::new(content).style(style)
         })
@@ -384,10 +470,11 @@ fn ui(f: &mut Frame<'_>, app: &mut App, list_state: &mut ListState) {
     let list = List::new(items)
         .block(Block::default()
             .borders(Borders::ALL)
-            .title(" 清理项目 (SPACE 选择, ENTER 扫描) "))
+            .border_style(Style::default().fg(header_color))
+            .title(" 📋 清理项目列表 "))
         .highlight_style(
             Style::default()
-                .bg(Color::DarkGray)
+                .bg(Color::Rgb(51, 65, 85))
                 .add_modifier(Modifier::BOLD),
         );
     
@@ -395,22 +482,38 @@ fn ui(f: &mut Frame<'_>, app: &mut App, list_state: &mut ListState) {
 
     // Status bar
     let status_bar = Block::default()
-        .borders(Borders::ALL);
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(header_color));
     
-    let status_text = Paragraph::new(app.status_message.as_str())
+    let status_line = Line::from(vec![
+        Span::styled("💡 ", Style::default().fg(accent_color)),
+        Span::styled(&app.status_message, Style::default().fg(Color::White)),
+    ]);
+    
+    let status_text = Paragraph::new(status_line)
         .block(status_bar)
         .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::Cyan));
+        .style(Style::default().bg(Color::Rgb(30, 41, 59)));
     f.render_widget(status_text, chunks[2]);
 
     // Progress indicator (if scanning or cleaning)
     if app.is_scanning || app.is_cleaning {
+        let progress_title = if app.is_scanning { " ⏳ 扫描中 " } else { " 🧹 清理中 " };
         let progress_block = Block::default()
-            .title(if app.is_scanning { " 扫描进度 " } else { " 清理进度 " });
+            .title(progress_title)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(accent_color));
+        
+        // Animated gradient color for progress
+        let progress_color = if app.is_scanning {
+            Color::Rgb(99, 102, 241)  // Indigo
+        } else {
+            Color::Rgb(34, 197, 94)   // Green
+        };
         
         let progress = Gauge::default()
             .block(progress_block)
-            .gauge_style(Style::default().fg(Color::LightCyan).bg(Color::Black))
+            .gauge_style(Style::default().fg(progress_color).bg(Color::Rgb(30, 41, 59)))
             .ratio(1.0); // Full progress
         
         let popup_area = Rect {
