@@ -31,6 +31,10 @@ pub struct CleanupResult {
     pub size_bytes: u64,
     pub entries: u64, // For non-file items (like registry entries)
     pub has_data: bool,
+    /// Files remaining after cleanup attempt
+    pub files_remaining: u64,
+    /// Size remaining after cleanup attempt
+    pub size_remaining: u64,
 }
 
 impl CleanupResult {
@@ -41,6 +45,8 @@ impl CleanupResult {
             size_bytes: 0,
             entries: 0,
             has_data: false,
+            files_remaining: 0,
+            size_remaining: 0,
         }
     }
 
@@ -81,7 +87,8 @@ impl CleanupItem {
 
     /// Clean the cleanup item (delete files)
     pub fn clean(&self) -> CleanupResult {
-        match &self.cleanup_type {
+        debug!("Starting cleanup for: {}", self.name);
+        let mut result = match &self.cleanup_type {
             CleanupType::Directory(path) => self.clean_directory(path, false),
             CleanupType::Directories(paths) => {
                 let mut result = CleanupResult::new();
@@ -95,7 +102,22 @@ impl CleanupItem {
                 result
             }
             CleanupType::TempFiles(path) => self.clean_temp_files(path, false),
+        };
+        
+        // Verify cleanup by scanning again
+        debug!("Verifying cleanup for: {}", self.name);
+        let verify_result = self.scan();
+        
+        if verify_result.has_data {
+            info!("Warning: {} still has {} files after cleanup", 
+                  self.name, verify_result.files);
+            // Update result to show what remains
+            result = verify_result;
         }
+        
+        info!("Cleanup complete for {}: {} files, {:.2} MB", 
+              self.name, result.files, result.size_mb());
+        result
     }
 
     fn scan_directory(&self, path: &Path) -> CleanupResult {

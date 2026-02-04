@@ -240,12 +240,24 @@ fn run_cli_mode(cli: &Cli) -> Result<()> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    
+    // Check if running without arguments (e.g., double-clicked .exe)
+    // If no specific options provided, default to TUI mode
+    let args: Vec<String> = std::env::args().collect();
+    let has_args = args.len() > 1;
+    let has_cli_options = cli.temp || cli.recycle || cli.directory.is_some();
+    
+    // Auto-detect TUI mode:
+    // - If --tui flag is explicitly set, use it
+    // - If no arguments at all OR just the program name, default to TUI
+    // - If CLI-specific options are used, use CLI mode
+    let use_tui = cli.tui || (!has_args && !has_cli_options);
 
     // Initialize logging (silent for TUI)
-    init_logging(cli.log_level(), cli.tui);
+    init_logging(cli.log_level(), use_tui);
 
     // Check if TUI mode is requested
-    if cli.tui {
+    if use_tui {
         info!("Starting TUI mode...");
         // Run TUI - no logging output to avoid interference
         let result = tui::run_tui();

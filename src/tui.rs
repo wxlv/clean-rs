@@ -12,7 +12,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap},
     Frame, Terminal,
 };
-use std::{io, time::Duration};
+use std::{io, time::{Duration, Instant}};
 use tracing::{debug, info};
 
 /// Application state for the TUI
@@ -25,7 +25,12 @@ pub struct App {
     pub status_message: String,
     pub is_scanning: bool,
     pub is_cleaning: bool,
+    /// Track the last key event time to prevent auto-repeat issues
+    pub last_key_event_time: Option<Instant>,
 }
+
+/// Cooldown duration between key events (150ms) to prevent auto-repeat
+const KEY_COOLDOWN_MS: u64 = 150;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppState {
@@ -51,6 +56,27 @@ impl App {
             status_message: "按 SPACE 选择/取消选择, ENTER 扫描, C 清理, Q 退出".to_string(),
             is_scanning: false,
             is_cleaning: false,
+            last_key_event_time: None,
+        }
+    }
+
+    /// Check if a key event should be processed based on cooldown
+    /// Returns true if the key event should be processed
+    pub fn should_process_key(&mut self) -> bool {
+        let now = Instant::now();
+        match self.last_key_event_time {
+            Some(last_time) => {
+                if now.duration_since(last_time).as_millis() >= KEY_COOLDOWN_MS as u128 {
+                    self.last_key_event_time = Some(now);
+                    true
+                } else {
+                    false
+                }
+            }
+            None => {
+                self.last_key_event_time = Some(now);
+                true
+            }
         }
     }
 
@@ -190,18 +216,21 @@ fn run_app<B: Backend>(
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Char('Q') => return Ok(()),
                     KeyCode::Char(' ') => {
-                        if !app.is_scanning && !app.is_cleaning {
+                        // Apply cooldown for Space key to prevent rapid toggling
+                        if !app.is_scanning && !app.is_cleaning && app.should_process_key() {
                             app.toggle_selection();
                         }
                     }
                     KeyCode::Up | KeyCode::Char('k') => {
-                        if !app.is_scanning && !app.is_cleaning {
+                        // Apply cooldown for navigation to prevent skipping
+                        if !app.is_scanning && !app.is_cleaning && app.should_process_key() {
                             app.previous();
                             list_state.select(Some(app.selected_index));
                         }
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
-                        if !app.is_scanning && !app.is_cleaning {
+                        // Apply cooldown for navigation to prevent skipping
+                        if !app.is_scanning && !app.is_cleaning && app.should_process_key() {
                             app.next();
                             list_state.select(Some(app.selected_index));
                         }
@@ -218,6 +247,10 @@ fn run_app<B: Backend>(
                             tokio::runtime::Runtime::new()
                                 .unwrap()
                                 .block_on(app.clean_selected());
+                            
+                            // After cleaning, reset to initial state
+                            *app = App::new();
+                            app.status_message = "清理完成！已重置到初始状态，可选择其他项目或按 Q 退出".to_string();
                         }
                     }
                     KeyCode::Char('r') | KeyCode::Char('R') => {
